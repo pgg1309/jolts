@@ -1,23 +1,23 @@
 ---
-title: "Jobless claims"
-author:
-- affiliation: pgrahl@jgpglobal.com.br
-  name: Dr. Paulo Gustavo Grahl, CFA
-date: "July 5, 2018"
 output:
-  html_document:
-    df_print: paged
   pdf_document:
     citation_package: natbib
     fig_caption: yes
-    latex_engine: pdflatex
-    template: ../../shared_functions/svm-latex-ms.tex
+    latex_engine: xelatex
+    template: L:/Data/Rstudio/git/jolts/svm-latex-ms.tex
+  html_document:
+    df_print: paged
+title: "Jobless claims"
+subtitle: Calculating breakeven and payroll growth
+thanks: "`r format(Sys.time(), 'Report created %B %d, %Y')`"
+author:
+- name: Dr. Paulo Gustavo Grahl, CFA
+  affiliation: pgrahl@jgpglobal.com.br
+abstract: This report explains the concept of breakeven claims.
+date: "July 5, 2018"
 fontsize: 12pt
 geometry: margin=1in
 fontfamily: mathpazo
-subtitle: Calculating breakeven and payroll growth
-thanks: '`r format(Sys.time(), 'Report created %B %d, %Y')`'
-abstract: This report explains the concept of breakeven claims.
 ---
 
 ```{r setup, include=FALSE}
