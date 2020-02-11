@@ -1,0 +1,289 @@
+---
+title: "Jobless claims"
+author:
+- affiliation: pgrahl@jgpglobal.com.br
+  name: Dr. Paulo Gustavo Grahl, CFA
+date: "July 5, 2018"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    citation_package: natbib
+    fig_caption: yes
+    latex_engine: pdflatex
+    template: ../../shared_functions/svm-latex-ms.tex
+fontsize: 12pt
+geometry: margin=1in
+fontfamily: mathpazo
+subtitle: Calculating breakeven and payroll growth
+thanks: '`r format(Sys.time(), 'Report created %B %d, %Y')`'
+abstract: This report explains the concept of breakeven claims.
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  include = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  dev = "pdf"
+  )
+```
+
+```{r load_libraries}
+require(tidyverse)
+
+```
+
+
+```{r load_data}
+jolts <- readxl::read_excel(
+  "../raw_data/us_jolts_data.xlsx",
+  col_types = c("date", "numeric", "numeric", "numeric", "numeric"),
+  na = "NA",
+  skip = 1
+  )
+jolts <- transmute(jolts,
+          date = zoo::as.yearmon(Code),
+          hires = USJBHIREO,
+          separations = USJBSEPRO,
+          quits = USJBQUITO,
+          layoffs = USJBLOFFO,
+          other = separations - quits - layoffs) %>% drop_na()
+
+claims <- readxl::read_excel(
+  "../raw_data/us_initial_claims.xlsx",
+  col_types = c("date", "numeric"),
+  na = "NA", 
+  skip = 1
+  )
+claims <- transmute(claims,
+                    date = as.Date(Code),
+                    claims = USUNCLM) %>% drop_na()
+claims <- mutate(claims, leadclaim = lead(claims))
+
+
+end_date <- claims$date[nrow(claims)]
+lubridate::day(end_date) <- lubridate::days_in_month(end_date)
+
+date_range <- seq(claims$date[1], end_date, by = "1 day" )
+dailyclaims <- tibble(date = date_range)
+
+monthly_claims <- left_join(dailyclaims, claims, by = "date") %>% 
+  mutate(claims = claims /7, leadclaim = leadclaim / 7) %>% 
+  mutate(fill = zoo::na.locf(leadclaim),
+         fill = lag(fill),
+         ano = lubridate::year(date),
+         mes = lubridate::month(date)) %>% 
+  group_by(ano, mes) %>%
+  summarize(monthly_claims = sum(fill),
+            monthly_claims = round(monthly_claims,0)) %>%
+  ungroup() %>%
+  mutate(date = zoo::as.yearmon(paste(ano, mes, 1, sep = "-"))) %>%
+  select(date, monthly_claims)
+
+```
+
+```{r global_vars}
+pg_theme <- theme_bw() + 
+  theme(
+    rect = element_rect(fill = "transparent"),
+    panel.background = element_rect(fill = "transparent"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)
+  ) 
+```
+
+
+# Employment breakeven claims
+
+The following text explains how to estimate a neutral jobless claims level, or breakeven claims, i.e., the level of jobless claims that would be compatible with zero employment growth.  
+It also highlights that declining jobless claims do not necessarily imply declining layoffs – it depends on the *filing rate*, which is currently on a downward trend. 
+The bottom line is that weekly claims are an important indicator but it does not have a 1-1 relationship to payroll. Filing rate and hiring also matter.
+
+# Introduction
+
+The JOLTS (Job Openings and Labor Turnover Survey) monthly report allows to break nonfarm payroll growth into *hires* and *separations* – see chart below.  
+
+```{r}
+jolts %>%
+  select(date, hires, separations) %>%
+  gather(key, value, -date) %>%
+  ggplot(aes(x = date, y = value, color = key)) +
+  geom_point() +
+  geom_line(linetype = "dashed") + 
+  geom_smooth(method = "loess", se=FALSE, span = 0.15, family = "symmetric") +
+  zoo::scale_x_yearmon(n=15) +
+  labs(title = "US JOLTS Employment",
+       subtitle = "thousands, sa",
+       x = NULL,
+       y = NULL,
+       color = NULL) + 
+  pg_theme
+  
+```
+
+The *separations* number is further split into: *quits*, *layoffs*, *other*. Quits are voluntary separations. Layoffs are involuntary separations, and *other* includes retirement, deaths, disability, etc. The chart below shows the breakdown of *separations*. Two things are interesting: (a) *quits* (usually larger than layoffs) is correlated with hires, which probably implies that the majority of people who quits a job voluntarily is almost sure to be hired shortly; (b) *other* separations is almost stable and does not fluctuates materially with the cycle.
+
+```{r}
+jolts %>%
+  select(date, quits, layoffs, other) %>%
+  gather(key, value, -date) %>%
+  ggplot(aes(x = date, y = value, color = key)) +
+  geom_point() +
+  geom_line(linetype = "dashed") + 
+  geom_smooth(method = "loess", se=FALSE, span = 0.15, family = "symmetric") +
+  zoo::scale_x_yearmon(n=15) +
+  labs(title = "US JOLTS - Separations",
+       subtitle = "thousands, sa",
+       x = NULL,
+       y = NULL,
+       color = NULL) + 
+  pg_theme
+
+```
+
+Based on the previous definitions, one can define *“net” hires* as hires excluding *quits* and *other*. The idea is to get a sort of *new* hires by excluding those hires that are associated with people voluntarily leaving, people going into retirement, etc. 
+
+```{r}
+jolts %>%
+  mutate(`net hires` = hires - quits - other) %>%
+  select(date, `net hires`, layoffs) %>%
+  gather(key, value, -date) %>%
+  ggplot(aes(x = date, y = value, color = key)) +
+  geom_point() +
+  geom_line(linetype = "dashed") + 
+  geom_smooth(method = "loess", se=FALSE, span = 0.15, family = "symmetric") +
+  zoo::scale_x_yearmon(n=15) +
+  labs(title = "US JOLTS: 'Net' hires vs. layoffs",
+       subtitle = "thousands, sa",
+       x = NULL,
+       y = NULL,
+       color = NULL) + 
+  pg_theme
+```
+
+
+We can define *filing rate* as the number of jobless claims divided by layoffs. The chart below shows the monthly figures for layoffs and claims, together with its smoothed trend. 
+
+
+```{r}
+jolts <- full_join(jolts, monthly_claims, by = "date")
+jolts <- arrange(jolts, date)
+
+jolts %>%
+  select(date, layoffs, monthly_claims) %>%
+  gather(key, value, -date) %>%
+  ggplot(aes(x = date, y = value, color = key)) +
+  geom_point() +
+  geom_line(linetype = "dashed") + 
+  geom_smooth(method = "loess", se=FALSE, span = 0.15, family = "symmetric") +
+  zoo::scale_x_yearmon(n=15) +
+  labs(title = "US Layoffs vs claims",
+       subtitle = "thousands, sa",
+       x = NULL,
+       y = NULL,
+       color = NULL) + 
+  pg_theme
+```
+
+The chart shows that *filing rate* was around 0.7-0.8 before the crisis and increased materially to almost 1.2 during the crisis. Note that that a number above 1 can be *“explained”* by differences in timing between layoffs and claims, different sampling methods, etc.  But what matters is the trend, which is clearly down since the recovery started and is currently at its lowest level.
+
+Note that for a given level of jobless claims, a *lower* filing rate means that layoffs are *higher*. Alternatively, for a given pace of layoffs a *lower* filing rate implies *lower* claims. The point here is that declining jobless claims does not necessarily imply declining layoffs (and thus increasing payrolls if we assume hiring pace constant). It depends on the path of the *filing rate*.
+
+```{r}
+layoff_t <- fitted(loess(layoffs~as.numeric(date),
+                         data = jolts,
+                         na.action = "na.exclude",
+                         span = 0.15,
+                         family = "symmetric")
+                   )
+monthly_claims_t <- fitted(loess(monthly_claims~as.numeric(date),
+                         data = jolts,
+                         na.action = "na.exclude",
+                         span = 0.15,
+                         family = "symmetric")
+                   )
+
+  
+jolts <- add_column(jolts,
+           layoff_t=round(layoff_t,0),
+           monthly_claims_t = round(monthly_claims_t,0)) %>%
+  mutate(filing_rate = monthly_claims_t / layoff_t)
+
+jolts %>%
+  select(date, filing_rate) %>%
+  ggplot(aes(x = date, y = filing_rate)) +
+  geom_point() +
+  geom_line(linetype = "dashed") + 
+  zoo::scale_x_yearmon(n=15) +
+  scale_y_continuous(breaks = seq(0.5,1.2,0.05)) +
+  labs(title = "US layoffs vs claims: filing rate",
+       subtitle = "ratio",
+       x = NULL,
+       y = NULL,
+       color = NULL) + 
+  pg_theme
+  
+```
+
+# Calculating breakeven claims
+
+So, we can now estimate what a *breakeven claims* (or *neutral* jobless claims) would be.
+
+breakeven claims = net hiring x filing rate x 0.23077
+
+The factor at the end converts monthly claims into weekly claims assuming an average of 4.33 weeks during a month. 
+```{r}
+net_hiring_t <- fitted(loess(hires-quits-other~as.numeric(date),
+                         data = jolts,
+                         na.action = "na.exclude",
+                         span = 0.15,
+                         family = "symmetric")
+                   )
+jolts <- add_column(jolts,
+           net_hiring_t=round(net_hiring_t,0)
+           ) %>%
+  mutate(breakeven_claims = round(net_hiring_t * filing_rate * 0.23077,0))
+
+
+
+last_breakeven <- jolts$breakeven_claims[!is.na(jolts$breakeven_claims)]
+last_breakeven <- last_breakeven[length(last_breakeven)]
+
+
+last_claims <- jolts$monthly_claims[!is.na(jolts$monthly_claims)]
+tt <- length(last_claims)
+last_claims_value <- round(last_claims[(tt-1):tt] * 0.23077,0)
+last_claims_date <- jolts$date[tt:(tt+1)] # primeira linha é NA
+
+```
+
+The chart below shows the time series of breakeven claims calculated this way. The latest point is `r last_breakeven`k. 
+
+
+```{r}
+jolts %>%
+  select(date, monthly_claims, breakeven_claims) %>%
+  mutate(claims = monthly_claims * 0.23077) %>%
+  select(-monthly_claims) %>%
+  gather(key, value, -date) %>%
+  ggplot(aes(x = date, y = value, color = key)) +
+  geom_point() +
+  geom_line(linetype = "dashed") + 
+  geom_smooth(method = "loess", se=FALSE, span = 0.15, family = "symmetric") +
+  zoo::scale_x_yearmon(n=15) +
+  scale_y_continuous(breaks = seq(200,700,50)) + 
+  labs(title = "US Estimated Breakeven Claims",
+       subtitle = "thousands, sa",
+       x = NULL,
+       y = NULL,
+       color = NULL) + 
+  pg_theme
+
+```
+
+The average weekly initial jobless claims for the most recent months
+was `r paste0(paste0(last_claims_value, "k"), " (",last_claims_date,")")`. 
+If we assume *net hiring* and *filing rate* have remained constant at the levels observed in the latest JOLTS report, then the current level of initial claims would be **compatible with payroll running at 
+`r paste0(paste0(round((last_breakeven - last_claims_value)/0.23077,0), "k"), " (",last_claims_date,")")`**.
